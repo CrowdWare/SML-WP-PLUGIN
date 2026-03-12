@@ -31,6 +31,18 @@ class CrowdBook_Frontend_Books
             return (string) ob_get_clean();
         }
 
+        echo '<div class="crowdbook-books-tools" aria-label="' . esc_attr__('Bücher filtern und sortieren', 'crowdbook') . '">';
+        echo '<div class="crowdbook-books-filter" role="group">';
+        echo '<button type="button" class="button crowdbook-books-filter-btn is-active" data-filter="*">' . esc_html__('Alle', 'crowdbook') . '</button>';
+        echo '<button type="button" class="button crowdbook-books-filter-btn" data-filter=".has-chapters">' . esc_html__('Mit Kapiteln', 'crowdbook') . '</button>';
+        echo '<button type="button" class="button crowdbook-books-filter-btn" data-filter=".no-chapters">' . esc_html__('Ohne Kapitel', 'crowdbook') . '</button>';
+        echo '</div>';
+        echo '<div class="crowdbook-books-sort" role="group">';
+        echo '<button type="button" class="button crowdbook-books-sort-btn is-active" data-sort-by="title">' . esc_html__('Titel A-Z', 'crowdbook') . '</button>';
+        echo '<button type="button" class="button crowdbook-books-sort-btn" data-sort-by="chapters">' . esc_html__('Kapitelzahl', 'crowdbook') . '</button>';
+        echo '</div>';
+        echo '</div>';
+
         echo '<div class="crowdbook-cards">';
         foreach ($books as $book) {
             $book_id = sanitize_key((string) $book->book_id);
@@ -42,8 +54,10 @@ class CrowdBook_Frontend_Books
             $tagline = $description !== '' ? wp_trim_words(wp_strip_all_tags($description), 18, '...') : __('Noch keine Beschreibung hinterlegt.', 'crowdbook');
             $title_attr = esc_attr($title);
             $fallback_cover_url = plugins_url('../assets/default-book-cover.svg', __FILE__);
+            $chapter_class = $published_count > 0 ? 'has-chapters' : 'no-chapters';
+            $sort_title = strtolower($title);
 
-            echo '<article class="crowdbook-card">';
+            echo '<article class="crowdbook-card crowdbook-book-item ' . esc_attr($chapter_class) . '" data-title="' . esc_attr($sort_title) . '" data-chapters="' . (int) $published_count . '">';
             echo '<a class="crowdbook-book-link" href="' . esc_url($url) . '" aria-label="' . $title_attr . '">';
             if ($cover_url !== '') {
                 echo '<img class="crowdbook-book-cover" src="' . $cover_url . '" alt="' . $title_attr . '" loading="lazy" />';

@@ -37,7 +37,7 @@ class CrowdBook_Frontend_Book_Index
         }
 
         $book = $this->books->get_by_book_id($book_id);
-        $admin_preview = isset($_GET['preview']) && $_GET['preview'] === '1' && current_user_can('manage_options');
+        $admin_preview = isset($_GET['preview']) && $_GET['preview'] === '1' && current_user_can('moderate_crowdbook');
         if ($book && $admin_preview && $this->books->has_pending_version($book)) {
             $book = $this->books->get_effective_preview($book);
         }
@@ -141,22 +141,22 @@ class CrowdBook_Frontend_Book_Index
 
             if ($index > 1) {
                 $prev_url = add_query_arg(['branch' => $selected_branch, 'step' => $index - 1], $base_book_url);
-                echo '<a class="button" href="' . esc_url($prev_url) . '">' . esc_html__('← Kapitel zurück', 'crowdbook') . '</a>';
+                echo '<a class="btn btn-default crowdbook-nav-btn" href="' . esc_url($prev_url) . '">' . esc_html__('← Kapitel zurück', 'crowdbook') . '</a>';
             }
             if ($index < $total) {
                 $next_url = add_query_arg(['branch' => $selected_branch, 'step' => $index + 1], $base_book_url);
-                echo '<a class="button button-primary" href="' . esc_url($next_url) . '">' . esc_html__('Nächstes Kapitel →', 'crowdbook') . '</a>';
+                echo '<a class="btn btn-primary crowdbook-nav-btn" href="' . esc_url($next_url) . '">' . esc_html__('Nächstes Kapitel →', 'crowdbook') . '</a>';
             }
             echo '</div>';
             echo '<div class="crowdbook-reader-nav-back">';
-            echo '<a class="button" href="' . esc_url($back_url) . '">' . esc_html__('↑ Zur Zweigübersicht', 'crowdbook') . '</a>';
+            echo '<a class="btn btn-default crowdbook-nav-btn" href="' . esc_url($back_url) . '">' . esc_html__('↑ Zur Zweigübersicht', 'crowdbook') . '</a>';
             echo '</div>';
             echo '</nav>';
         }
 
         $logged_in = $this->users->get_current_user();
         $cta_url = $logged_in ? home_url('/editor') : home_url('/login');
-        echo '<footer class="crowdbook-index-footer"><a class="button button-primary" href="' . esc_url($cta_url) . '">' . esc_html__('Schreib deinen eigenen Weg', 'crowdbook') . '</a></footer>';
+        echo '<footer class="crowdbook-index-footer"><a class="btn btn-primary crowdbook-nav-btn" href="' . esc_url($cta_url) . '">' . esc_html__('Schreib deinen eigenen Weg', 'crowdbook') . '</a></footer>';
 
         echo '</section>';
 

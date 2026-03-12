@@ -74,8 +74,8 @@ perl -i -pe "if (/wp_enqueue_script\\('sml-admin'/) { s/'\\d+\\.\\d+\\.\\d+'/'${
 
 CROWDBOOK_FILE="$ROOT_DIR/crowdbook/crowdbook.php"
 if [[ -f "$CROWDBOOK_FILE" ]]; then
-  perl -i -pe "if (/wp_enqueue_style\\(\\s*'crowdbook-css'/) { s/'\\d+\\.\\d+\\.\\d+'/'${new_version}'/; }" "$CROWDBOOK_FILE"
-  perl -i -pe "if (/wp_enqueue_script\\(\\s*'crowdbook-js'/) { s/'\\d+\\.\\d+\\.\\d+'/'${new_version}'/; }" "$CROWDBOOK_FILE"
+  perl -0777 -i -pe "s/wp_enqueue_style\\(\\s*\\n\\s*'crowdbook-css'.*?\\n\\s*'\\K\\d+\\.\\d+\\.\\d+(?='\\s*\\n\\s*\\);)/${new_version}/s" "$CROWDBOOK_FILE"
+  perl -0777 -i -pe "s/wp_enqueue_script\\(\\s*\\n\\s*'crowdbook-js'.*?\\n\\s*'\\K\\d+\\.\\d+\\.\\d+(?='\\s*,\\s*\\n\\s*true\\s*\\);)/${new_version}/s" "$CROWDBOOK_FILE"
 fi
 
 # Remove hidden control chars that can break PHP parsing (keeps tab/newline/carriage return).

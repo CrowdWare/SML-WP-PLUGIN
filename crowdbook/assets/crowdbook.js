@@ -330,11 +330,58 @@
     });
   }
 
+  function initBooksIsotope() {
+    if (!window.jQuery || !window.jQuery.fn || !window.jQuery.fn.isotope) {
+      return;
+    }
+
+    var $ = window.jQuery;
+    var $grid = $('.crowdbook-cards');
+    if (!$grid.length || !$grid.find('.crowdbook-book-item').length) {
+      return;
+    }
+
+    $grid.isotope({
+      itemSelector: '.crowdbook-book-item',
+      layoutMode: 'fitRows',
+      getSortData: {
+        title: function (itemElem) {
+          return String($(itemElem).attr('data-title') || '').toLowerCase();
+        },
+        chapters: function (itemElem) {
+          return parseInt($(itemElem).attr('data-chapters') || '0', 10);
+        },
+      },
+      sortBy: 'title',
+      sortAscending: {
+        title: true,
+        chapters: false,
+      },
+    });
+
+    $('.crowdbook-books-filter-btn').on('click', function () {
+      var $btn = $(this);
+      var filterValue = String($btn.attr('data-filter') || '*');
+      $('.crowdbook-books-filter-btn').removeClass('is-active');
+      $btn.addClass('is-active');
+      $grid.isotope({ filter: filterValue });
+    });
+
+    $('.crowdbook-books-sort-btn').on('click', function () {
+      var $btn = $(this);
+      var sortBy = String($btn.attr('data-sort-by') || 'title');
+      $('.crowdbook-books-sort-btn').removeClass('is-active');
+      $btn.addClass('is-active');
+      $grid.isotope({ sortBy: sortBy });
+    });
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     bindLikeButtons();
     bindCopyButtons();
     initMonacoEditor();
     bindUploadButton();
     bindCoverUpload();
+    initBooksIsotope();
   });
 })();

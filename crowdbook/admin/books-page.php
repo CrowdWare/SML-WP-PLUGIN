@@ -19,7 +19,7 @@ class CrowdBook_Admin_Books_Page
 
     public function handle_actions(): void
     {
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('moderate_crowdbook')) {
             return;
         }
 
@@ -62,7 +62,7 @@ class CrowdBook_Admin_Books_Page
 
     public function render(): void
     {
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('moderate_crowdbook')) {
             wp_die(esc_html__('Keine Berechtigung.', 'crowdbook'));
         }
 

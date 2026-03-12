@@ -30,6 +30,7 @@ require_once __DIR__ . '/admin/books-page.php';
 class CrowdBook_Plugin
 {
     private const DB_VERSION = '3.4.1';
+    private const CAP_MODERATE = 'moderate_crowdbook';
 
     private CrowdBook_Mailer $mailer;
     private CrowdBook_Books $books;
@@ -81,6 +82,7 @@ class CrowdBook_Plugin
 
         add_action('init', [$this, 'bootstrap_session'], 1);
         add_action('init', [$this, 'maybe_upgrade'], 2);
+        add_action('init', [$this, 'ensure_roles'], 3);
         add_action('init', [$this, 'register_rewrites']);
         add_filter('query_vars', [$this, 'register_query_vars']);
         add_action('template_redirect', [$this, 'handle_front_routes']);
@@ -99,6 +101,7 @@ class CrowdBook_Plugin
 
     public static function activate(): void
     {
+        self::install_roles();
         self::create_tables();
         update_option('crowdbook_db_version', self::DB_VERSION);
         self::register_rewrite_rules();
@@ -117,6 +120,8 @@ class CrowdBook_Plugin
 
     public function maybe_upgrade(): void
     {
+        self::install_roles();
+
         $current = (string) get_option('crowdbook_db_version', '');
         if ($current === self::DB_VERSION) {
             return;
@@ -126,6 +131,11 @@ class CrowdBook_Plugin
         self::register_rewrite_rules();
         flush_rewrite_rules();
         update_option('crowdbook_db_version', self::DB_VERSION);
+    }
+
+    public function ensure_roles(): void
+    {
+        self::install_roles();
     }
 
     public function register_rewrites(): void
@@ -203,16 +213,23 @@ class CrowdBook_Plugin
             'crowdbook-css',
             plugins_url('assets/crowdbook.css', __FILE__),
             [],
-            '3.0.1'
+            '0.1.41'
         );
 
         wp_enqueue_script('sml-monaco-loader', 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js', [], null, true);
+        wp_enqueue_script(
+            'crowdbook-isotope',
+            'https://unpkg.com/isotope-layout@3/dist/isotope.pkgd.min.js',
+            ['jquery'],
+            '3.0.6',
+            true
+        );
 
         wp_enqueue_script(
             'crowdbook-js',
             plugins_url('assets/crowdbook.js', __FILE__),
-            ['sml-monaco-loader'],
-            '3.0.1',
+            ['sml-monaco-loader', 'crowdbook-isotope'],
+            '0.1.41',
             true
         );
 
@@ -236,7 +253,7 @@ class CrowdBook_Plugin
         add_menu_page(
             __('CrowdBook', 'crowdbook'),
             __('CrowdBook', 'crowdbook'),
-            'manage_options',
+            self::CAP_MODERATE,
             'crowdbook-dashboard',
             function (): void {
                 $this->admin_dashboard->render();
@@ -249,7 +266,7 @@ class CrowdBook_Plugin
             'crowdbook-dashboard',
             __('Bücher', 'crowdbook'),
             __('Bücher', 'crowdbook'),
-            'manage_options',
+            self::CAP_MODERATE,
             'crowdbook-books',
             function (): void {
                 $this->admin_books->handle_actions();
@@ -261,7 +278,7 @@ class CrowdBook_Plugin
             'crowdbook-dashboard',
             __('Kapitel Moderation', 'crowdbook'),
             __('Kapitel Moderation', 'crowdbook'),
-            'manage_options',
+            self::CAP_MODERATE,
             'crowdbook-chapters',
             function (): void {
                 $this->admin_chapters->handle_actions();
@@ -332,7 +349,7 @@ class CrowdBook_Plugin
         }
         if (is_string($book) && $book !== '') {
             $book_row = $this->books->get_by_book_id($book);
-            $admin_preview = isset($_GET['preview']) && $_GET['preview'] === '1' && current_user_can('manage_options');
+            $admin_preview = isset($_GET['preview']) && $_GET['preview'] === '1' && current_user_can(self::CAP_MODERATE);
             if ($book_row && (string) $book_row->status !== 'active' && !$admin_preview) {
                 global $wp_query;
                 $wp_query->set_404();
@@ -359,7 +376,7 @@ class CrowdBook_Plugin
     private function render_chapter_page(string $slug): void
     {
         $chapter = $this->chapters->get_by_slug($slug);
-        $admin_preview = isset($_GET['preview']) && $_GET['preview'] === '1' && current_user_can('manage_options');
+        $admin_preview = isset($_GET['preview']) && $_GET['preview'] === '1' && current_user_can(self::CAP_MODERATE);
         $is_visible = $chapter && ((string) $chapter->status === 'published' || $admin_preview);
 
         if (!$is_visible) {
@@ -407,7 +424,7 @@ class CrowdBook_Plugin
                 }
             } else {
                 $login_url = esc_url(home_url('/login'));
-                $body .= '<p><a class="button" href="' . $login_url . '">' . esc_html__('Einloggen, um zu liken', 'crowdbook') . '</a> · 👍 ' . (int) $chapter->like_count . '</p>';
+                $body .= '<p><a class="btn btn-primary crowdbook-nav-btn" href="' . $login_url . '">' . esc_html__('Einloggen, um zu liken', 'crowdbook') . '</a> · 👍 ' . (int) $chapter->like_count . '</p>';
             }
             $body .= $this->social->render_share_buttons((string) $chapter->title, $chapter_url);
             if ($pending_preview) {
@@ -706,5 +723,23 @@ class CrowdBook_Plugin
 
         $books_repo = new CrowdBook_Books();
         $books_repo->purge_legacy_seed_book();
+    }
+
+    private static function install_roles(): void
+    {
+        $moderator = get_role('crowdbook_moderator');
+        if (!$moderator) {
+            add_role('crowdbook_moderator', 'CrowdBook Moderator', [
+                'read' => true,
+                self::CAP_MODERATE => true,
+            ]);
+        } else {
+            $moderator->add_cap(self::CAP_MODERATE);
+        }
+
+        $admin = get_role('administrator');
+        if ($admin) {
+            $admin->add_cap(self::CAP_MODERATE);
+        }
     }
 }

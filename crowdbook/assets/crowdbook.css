@@ -1,5 +1,9 @@
 .crowdbook-content {
   max-width: 100%;
+  --cb-accent: var(--aa-accent, #9db667);
+  --cb-accent-hover: #89a550;
+  --cb-dark: #2e363f;
+  --cb-light: #ffffff;
 }
 
 .crowdbook-content a {
@@ -20,6 +24,30 @@
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 1.1rem;
   margin: 1rem 0;
+}
+
+.crowdbook-books-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  align-items: center;
+  margin: 0.6rem 0 0.2rem;
+}
+
+.crowdbook-books-filter,
+.crowdbook-books-sort {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.crowdbook-books-tools .button {
+  text-decoration: none !important;
+}
+
+.crowdbook-books-tools .button.is-active {
+  outline: 2px solid rgba(255, 255, 255, 0.45);
+  outline-offset: 1px;
 }
 
 .crowdbook-branch-title {
@@ -236,20 +264,18 @@
   border: 1px solid rgba(0, 0, 0, 0.25);
 }
 
-.crowdbook-dashboard .button,
-.crowdbook-reader .button,
-.crowdbook-index .button {
-  color: #fff !important;
-  background: #5b9f34 !important;
-  border: 1px solid #5b9f34 !important;
+.crowdbook-dashboard .button {
+  color: var(--cb-dark) !important;
+  background: var(--cb-accent) !important;
+  border: 1px solid var(--cb-accent) !important;
   text-decoration: none !important;
+  font-weight: 700;
 }
 
-.crowdbook-dashboard .button:hover,
-.crowdbook-reader .button:hover,
-.crowdbook-index .button:hover {
-  background: #4f8b2e !important;
-  border-color: #4f8b2e !important;
+.crowdbook-dashboard .button:hover {
+  background: var(--cb-accent-hover) !important;
+  border-color: var(--cb-accent-hover) !important;
+  color: var(--cb-dark) !important;
 }
 
 .crowdbook-form-actions .button:last-child {
@@ -372,4 +398,9 @@
   height: auto;
   border-radius: 8px;
   margin: 0.6rem 0;
+}
+
+.crowdbook-nav-btn {
+  text-decoration: none !important;
+  font-weight: 700;
 }
