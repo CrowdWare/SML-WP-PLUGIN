@@ -91,6 +91,7 @@ rm -f "$zip_versioned" "$zip_latest"
     -x "${PLUGIN_DIR_NAME}/.git/*" \
        "${PLUGIN_DIR_NAME}/.DS_Store" \
        "${PLUGIN_DIR_NAME}/spec.md" \
+       "${PLUGIN_DIR_NAME}/sml-wp-plugin/*" \
        "${PLUGIN_DIR_NAME}/*.zip"
 )
 

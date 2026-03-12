@@ -16,6 +16,11 @@ class SML_Renderer
      * @var array<string, bool>
      */
     private array $emitted_js = [];
+    private int $include_depth = 0;
+    /**
+     * @var array<int, string>
+     */
+    private array $include_stack = [];
 
     /**
      * @var array<string, string>
@@ -221,8 +226,279 @@ class SML_Renderer
             'markdown' => $this->renderMarkdown($props),
             'image' => $this->renderImage($props),
             'spacer' => $this->renderSpacer($props),
+            'when' => $this->renderWhen($props, $children),
+            'includesml' => $this->renderIncludeSml($props),
             default => $this->renderContainer('div', 'sml-node sml-' . sanitize_html_class($type), $props, $children),
         };
+    }
+
+    private function renderWhen(array $props, array $children): string
+    {
+        $cases = '';
+        foreach ($children as $child) {
+            if (!is_array($child)) {
+                continue;
+            }
+
+            $case_type = strtolower((string) ($child['type'] ?? ''));
+            $case_class = match ($case_type) {
+                'desktop' => 'sml-when-desktop',
+                'mobile' => 'sml-when-mobile',
+                'portrait' => 'sml-when-portrait',
+                'landscape' => 'sml-when-landscape',
+                'mobileportrait', 'portraitmobile' => 'sml-when-mobile-portrait',
+                'mobilelandscape', 'landscapemobile' => 'sml-when-mobile-landscape',
+                'default' => 'sml-when-default',
+                default => '',
+            };
+
+            if ($case_class === '') {
+                continue;
+            }
+
+            $case_props = is_array($child['props'] ?? null) ? $child['props'] : [];
+            $case_children = is_array($child['children'] ?? null) ? $child['children'] : [];
+            $case_style = $this->buildStyle($case_props);
+            $case_class_attr = $this->buildClassAttr('sml-when-case ' . $case_class, $case_props);
+            $case_content = $this->renderChildren($case_children);
+            $cases .= '<div class="' . esc_attr($case_class_attr) . '"' . $case_style . '>' . $case_content . '</div>';
+        }
+
+        if ($cases === '') {
+            return '';
+        }
+
+        $style = $this->buildStyle($props);
+        $class_attr = $this->buildClassAttr('sml-when', $props);
+        return '<div class="' . esc_attr($class_attr) . '"' . $style . '>' . $cases . '</div>';
+    }
+
+    private function renderIncludeSml(array $props): string
+    {
+        $direct_page_ref = isset($props['page']) ? (string) $props['page'] : ((isset($props['slug']) ? (string) $props['slug'] : ''));
+        if (trim($direct_page_ref) !== '') {
+            $stack_key = 'page:' . trim($direct_page_ref);
+            if ($this->include_depth >= 8) {
+                return '<pre class="sml-error">Include depth limit reached for: ' . esc_html($stack_key) . '</pre>';
+            }
+            if (in_array($stack_key, $this->include_stack, true)) {
+                return '<pre class="sml-error">Include cycle detected: ' . esc_html($stack_key) . '</pre>';
+            }
+
+            $source = $this->loadSmlFromPageReference($direct_page_ref);
+            if (is_string($source) && trim($source) !== '') {
+                try {
+                    $this->include_depth++;
+                    $this->include_stack[] = $stack_key;
+
+                    $parser = new SML_Parser();
+                    $nodes = $parser->parse($source);
+                    return $this->render($nodes);
+                } catch (Throwable $e) {
+                    return '<pre class="sml-error">Include parse error (page:' . esc_html($direct_page_ref) . '): ' . esc_html($e->getMessage()) . '</pre>';
+                } finally {
+                    array_pop($this->include_stack);
+                    $this->include_depth = max(0, $this->include_depth - 1);
+                }
+            }
+            return '<pre class="sml-error">SML page not found: ' . esc_html($direct_page_ref) . '</pre>';
+        }
+
+        if (isset($props['id'])) {
+            $id_ref = trim((string) $props['id']);
+            if ($id_ref !== '') {
+                $stack_key = 'id:' . $id_ref;
+                if ($this->include_depth >= 8) {
+                    return '<pre class="sml-error">Include depth limit reached for: ' . esc_html($stack_key) . '</pre>';
+                }
+                if (in_array($stack_key, $this->include_stack, true)) {
+                    return '<pre class="sml-error">Include cycle detected: ' . esc_html($stack_key) . '</pre>';
+                }
+
+                $source = $this->loadSmlFromPageReference('id:' . $id_ref);
+                if (is_string($source) && trim($source) !== '') {
+                    try {
+                        $this->include_depth++;
+                        $this->include_stack[] = $stack_key;
+
+                        $parser = new SML_Parser();
+                        $nodes = $parser->parse($source);
+                        return $this->render($nodes);
+                    } catch (Throwable $e) {
+                        return '<pre class="sml-error">Include parse error (id:' . esc_html($id_ref) . '): ' . esc_html($e->getMessage()) . '</pre>';
+                    } finally {
+                        array_pop($this->include_stack);
+                        $this->include_depth = max(0, $this->include_depth - 1);
+                    }
+                }
+                return '<pre class="sml-error">SML page not found by id: ' . esc_html($id_ref) . '</pre>';
+            }
+        }
+
+        $part = isset($props['part']) ? (string) $props['part'] : ((isset($props['src']) ? (string) $props['src'] : ''));
+        $part = ltrim(trim($part), '/');
+        $part = str_replace('..', '', $part);
+        if ($part === '') {
+            return '';
+        }
+
+        $resolved_part = $part;
+        $source = $this->loadFirstMatchingSmlPart($part, $resolved_part);
+        if ($source === null || trim($source) === '') {
+            return '<pre class="sml-error">SML part not found: ' . esc_html($part) . '</pre>';
+        }
+
+        if ($this->include_depth >= 8) {
+            return '<pre class="sml-error">Include depth limit reached for: ' . esc_html($resolved_part) . '</pre>';
+        }
+
+        if (in_array($resolved_part, $this->include_stack, true)) {
+            return '<pre class="sml-error">Include cycle detected: ' . esc_html($resolved_part) . '</pre>';
+        }
+
+        try {
+            $this->include_depth++;
+            $this->include_stack[] = $resolved_part;
+
+            $parser = new SML_Parser();
+            $nodes = $parser->parse($source);
+            return $this->render($nodes);
+        } catch (Throwable $e) {
+            return '<pre class="sml-error">Include parse error (' . esc_html($resolved_part) . '): ' . esc_html($e->getMessage()) . '</pre>';
+        } finally {
+            array_pop($this->include_stack);
+            $this->include_depth = max(0, $this->include_depth - 1);
+        }
+    }
+
+    private function loadFirstMatchingSmlPart(string $part, ?string &$resolvedPart = null): ?string
+    {
+        $normalized = trim($part);
+        if (preg_match('#^https?://#i', $normalized)) {
+            $url_path = parse_url($normalized, PHP_URL_PATH);
+            if (is_string($url_path) && $url_path !== '') {
+                $normalized = trim($url_path, '/');
+            }
+        }
+
+        $normalized = trim($normalized, '/');
+        $candidates = [$normalized];
+
+        if (str_contains($normalized, '/')) {
+            $segments = array_values(array_filter(explode('/', $normalized), static fn($s) => is_string($s) && $s !== ''));
+            if ($segments !== []) {
+                $last = (string) end($segments);
+                $candidates[] = $last;
+                if (count($segments) >= 2 && strtolower((string) $segments[0]) === 'sml') {
+                    $candidates[] = (string) $segments[1];
+                }
+            }
+        }
+
+        if (!preg_match('/\.[a-z0-9]+$/i', $part)) {
+            $candidates[] = $normalized . '.sml';
+            $candidates[] = $normalized . '.md';
+            $basename = basename($normalized);
+            $candidates[] = $basename . '.sml';
+            $candidates[] = $basename . '.md';
+        }
+
+        foreach (array_values(array_unique($candidates)) as $candidate) {
+            $source = $this->loadSmlPart($candidate);
+            if ($source === null) {
+                continue;
+            }
+            $resolvedPart = $candidate;
+            return $source;
+        }
+
+        return null;
+    }
+
+    private function loadSmlFromPageReference(string $ref): ?string
+    {
+        $raw = trim($ref);
+        if ($raw === '') {
+            return null;
+        }
+
+        $id = 0;
+        if (preg_match('/^id:(\d+)$/i', $raw, $m)) {
+            $id = (int) $m[1];
+        } elseif (ctype_digit($raw)) {
+            $id = (int) $raw;
+        }
+
+        if ($id > 0) {
+            $post = get_post($id);
+            if ($post instanceof WP_Post && $post->post_type === 'sml_page') {
+                $source = (string) get_post_meta((int) $post->ID, '_sml_source', true);
+                return trim($source) !== '' ? $source : null;
+            }
+            return null;
+        }
+
+        $candidate = $raw;
+        if (preg_match('#^https?://#i', $candidate)) {
+            $url_path = parse_url($candidate, PHP_URL_PATH);
+            if (is_string($url_path) && $url_path !== '') {
+                $candidate = trim($url_path, '/');
+            }
+        }
+
+        $candidate = trim($candidate, '/');
+        if ($candidate === '') {
+            return null;
+        }
+
+        $segments = array_values(array_filter(explode('/', $candidate), static fn($s) => is_string($s) && $s !== ''));
+        if (count($segments) >= 2 && strtolower((string) $segments[0]) === 'sml') {
+            $candidate = (string) $segments[1];
+        } elseif ($segments !== []) {
+            $candidate = (string) end($segments);
+        }
+
+        $slug = sanitize_title($candidate);
+        if ($slug === '') {
+            return null;
+        }
+
+        $slug_variants = [$slug];
+        if (str_starts_with($slug, 'sml-')) {
+            $without_prefix = substr($slug, 4);
+            if ($without_prefix !== '') {
+                $slug_variants[] = $without_prefix;
+            }
+        } else {
+            $slug_variants[] = 'sml-' . $slug;
+        }
+        $slug_variants = array_values(array_unique($slug_variants));
+
+        foreach ($slug_variants as $slug_variant) {
+            $page = get_page_by_path($slug_variant, OBJECT, 'sml_page');
+            if ($page instanceof WP_Post) {
+                $source = (string) get_post_meta((int) $page->ID, '_sml_source', true);
+                if (trim($source) !== '') {
+                    return $source;
+                }
+            }
+        }
+
+        // Fallback query by post_name in case get_page_by_path misses custom type context.
+        $query = get_posts([
+            'post_type' => 'sml_page',
+            'post_status' => ['publish', 'draft', 'private', 'pending', 'future'],
+            'numberposts' => 1,
+            'name' => $slug,
+        ]);
+        if (is_array($query) && isset($query[0]) && $query[0] instanceof WP_Post) {
+            $source = (string) get_post_meta((int) $query[0]->ID, '_sml_source', true);
+            if (trim($source) !== '') {
+                return $source;
+            }
+        }
+
+        return null;
     }
 
     private function renderChildren(array $children): string
@@ -372,6 +648,102 @@ class SML_Renderer
         return $content === false ? '' : $content;
     }
 
+    private function loadSmlPart(string $part): ?string
+    {
+        $trimmed = trim($part);
+        if (preg_match('/^id:(\d+)$/i', $trimmed, $m)) {
+            $id = (int) $m[1];
+            if ($id > 0) {
+                $source = (string) get_post_meta($id, '_sml_source', true);
+                if (trim($source) !== '') {
+                    return $source;
+                }
+            }
+        }
+
+        if (ctype_digit($trimmed)) {
+            $id = (int) $trimmed;
+            if ($id > 0) {
+                $source = (string) get_post_meta($id, '_sml_source', true);
+                if (trim($source) !== '') {
+                    return $source;
+                }
+            }
+        }
+
+        if (function_exists('sml_pages_get_markdown_part_content')) {
+            $db_part = sml_pages_get_markdown_part_content($part);
+            if (is_string($db_part) && trim($db_part) !== '') {
+                return $db_part;
+            }
+        }
+
+        $upload = wp_upload_dir();
+        $base = trailingslashit($upload['basedir']) . 'sml-parts/';
+        $path = $base . $part;
+        $content = null;
+        if (is_file($path) && is_readable($path)) {
+            $read = file_get_contents($path);
+            if ($read !== false) {
+                $content = $read;
+            }
+        }
+
+        if (is_string($content) && trim($content) !== '') {
+            return $content;
+        }
+
+        // Fallback: allow IncludeSml to reference an existing sml_page slug.
+        $slug_candidate = preg_replace('/\.[a-z0-9]+$/i', '', $part);
+        $slug = sanitize_title((string) $slug_candidate);
+        if ($slug !== '') {
+            $slug_variants = [$slug];
+            if (str_starts_with($slug, 'sml-')) {
+                $without_prefix = substr($slug, 4);
+                if ($without_prefix !== '') {
+                    $slug_variants[] = $without_prefix;
+                }
+            } else {
+                $slug_variants[] = 'sml-' . $slug;
+            }
+            $slug_variants = array_values(array_unique(array_filter($slug_variants, static fn($v) => is_string($v) && $v !== '')));
+
+            foreach ($slug_variants as $slug_variant) {
+                $page = get_page_by_path($slug_variant, OBJECT, 'sml_page');
+                if ($page instanceof WP_Post) {
+                    $source = (string) get_post_meta((int) $page->ID, '_sml_source', true);
+                    if (trim($source) !== '') {
+                        return $source;
+                    }
+                }
+            }
+
+            // Additional fallback: match by normalized post title.
+            $candidates = get_posts([
+                'post_type' => 'sml_page',
+                'post_status' => ['publish', 'draft', 'private', 'pending', 'future'],
+                'numberposts' => -1,
+            ]);
+            if (is_array($candidates)) {
+                foreach ($candidates as $candidate) {
+                    if (!($candidate instanceof WP_Post)) {
+                        continue;
+                    }
+                    $title_slug = sanitize_title((string) $candidate->post_title);
+                    if (!in_array($title_slug, $slug_variants, true)) {
+                        continue;
+                    }
+                    $source = (string) get_post_meta((int) $candidate->ID, '_sml_source', true);
+                    if (trim($source) !== '') {
+                        return $source;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
     private function markdownToHtml(string $markdown): string
     {
         $lines = preg_split('/\R/', $markdown) ?: [];
@@ -435,6 +807,7 @@ class SML_Renderer
             $bg = $this->sanitizeCssColor((string) $props['bgColor']);
             if ($bg !== '') {
                 $styles[] = 'background-color:' . $bg;
+                $styles[] = '--sml-wrapper-bg:' . $bg;
             }
         }
 
@@ -442,6 +815,7 @@ class SML_Renderer
             $color = $this->sanitizeCssColor((string) $props['color']);
             if ($color !== '') {
                 $styles[] = 'color:' . $color;
+                $styles[] = '--sml-wrapper-color:' . $color;
             }
         }
 

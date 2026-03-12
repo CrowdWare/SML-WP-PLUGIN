@@ -3,9 +3,23 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-while (have_posts()) :
+$render_post = null;
+if (have_posts()) {
     the_post();
-    $html = SML_Pages_Plugin::get_rendered_for_post(get_the_ID());
+    $render_post = get_post(get_the_ID());
+} else {
+    $render_post = get_post((int) get_queried_object_id());
+    if (!($render_post instanceof WP_Post)) {
+        global $post;
+        if ($post instanceof WP_Post) {
+            $render_post = $post;
+        }
+    }
+}
+
+if ($render_post instanceof WP_Post) {
+    setup_postdata($render_post);
+    $html = SML_Pages_Plugin::get_rendered_for_post((int) $render_post->ID);
     ?>
 <!doctype html>
 <html <?php language_attributes(); ?>>
@@ -25,4 +39,5 @@ while (have_posts()) :
 </body>
 </html>
     <?php
-endwhile;
+    wp_reset_postdata();
+}
