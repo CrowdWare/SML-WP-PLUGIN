@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Forge WP SML Compiler
- * Plugin URI: https://codeberg.org/CrowdWare/forge-wp-sml-compiler
- * Description: SML Compiler for WordPress: build with SML/Twig/Markdown and ship super fast static HTML output.
+ * Plugin URI: https://codeberg.org/CrowdWare/ForgeCrowdBook
+ * Description: SML Compiler for WordPress: build pages with SML, Twig and Markdown, then ship super fast static HTML.
  * Version: 0.1.34
  * Author: Artanidos
  * Author URI: https://codeberg.org/CrowdWare
