@@ -3,7 +3,7 @@
  * Plugin Name: Forge WP SML Compiler
  * Plugin URI: https://codeberg.org/CrowdWare/forge-wp-sml-compiler
  * Description: SML Compiler for WordPress: build with SML/Twig/Markdown and ship super fast static HTML output.
- * Version: 0.1.12
+ * Version: 0.1.34
  * Author: Artanidos
  * Author URI: https://codeberg.org/CrowdWare
  */
@@ -19,6 +19,10 @@ if (is_readable($autoload)) {
 
 require_once __DIR__ . '/includes/class-sml-parser.php';
 require_once __DIR__ . '/includes/class-sml-renderer.php';
+$crowdbook_boot_file = __DIR__ . '/crowdbook/crowdbook.php';
+if (is_readable($crowdbook_boot_file)) {
+    require_once $crowdbook_boot_file;
+}
 
 class SML_Pages_Plugin
 {
@@ -431,9 +435,9 @@ class SML_Pages_Plugin
             return;
         }
 
-        wp_enqueue_style('sml-admin', plugins_url('assets/sml-admin.css', __FILE__), [], '0.1.12');
+        wp_enqueue_style('sml-admin', plugins_url('assets/sml-admin.css', __FILE__), [], '0.1.34');
         wp_enqueue_script('sml-monaco-loader', 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js', [], null, true);
-        wp_enqueue_script('sml-admin', plugins_url('assets/sml-admin.js', __FILE__), ['sml-monaco-loader'], '0.1.12', true);
+        wp_enqueue_script('sml-admin', plugins_url('assets/sml-admin.js', __FILE__), ['sml-monaco-loader'], '0.1.34', true);
 
         $language_config_path = __DIR__ . '/language-configuration.json';
         $grammar_path = __DIR__ . '/sml.tmLanguage.json';
@@ -737,17 +741,39 @@ class SML_Pages_Plugin
 }
 
 $GLOBALS['sml_pages_plugin'] = new SML_Pages_Plugin();
+$GLOBALS['crowdbook_plugin'] = null;
+
+if (class_exists('CrowdBook_Plugin')) {
+    try {
+        $GLOBALS['crowdbook_plugin'] = new CrowdBook_Plugin();
+    } catch (Throwable $e) {
+        error_log('CrowdBook bootstrap failed: ' . $e->getMessage());
+    }
+}
 
 function sml_pages_plugin_activate(): void
 {
     $plugin = new SML_Pages_Plugin();
     $plugin->register_post_type();
+
+    if (class_exists('CrowdBook_Plugin')) {
+        try {
+            CrowdBook_Plugin::activate();
+        } catch (Throwable $e) {
+            error_log('CrowdBook activation failed: ' . $e->getMessage());
+        }
+    }
+
     flush_rewrite_rules();
 }
 register_activation_hook(__FILE__, 'sml_pages_plugin_activate');
 
 function sml_pages_plugin_deactivate(): void
 {
+    if (class_exists('CrowdBook_Plugin')) {
+        CrowdBook_Plugin::deactivate();
+    }
+
     flush_rewrite_rules();
 }
 register_deactivation_hook(__FILE__, 'sml_pages_plugin_deactivate');

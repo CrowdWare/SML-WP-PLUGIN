@@ -16,6 +16,11 @@ if ! command -v zip >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v perl >/dev/null 2>&1; then
+  echo "Fehler: 'perl' ist nicht installiert."
+  exit 1
+fi
+
 current_version="$(sed -nE 's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$/\1/p' "$PLUGIN_FILE" | head -n1)"
 if [[ -z "$current_version" ]]; then
   echo "Fehler: Konnte aktuelle Version in $PLUGIN_FILE nicht lesen."
@@ -63,10 +68,18 @@ awk -v v="$new_version" '
 ' "$PLUGIN_FILE" > "$tmp_file"
 mv "$tmp_file" "$PLUGIN_FILE"
 
-# Keep asset versions in sync for cache busting.
-sed -i '' -E "/wp_enqueue_style\\('sml-admin'/ s/'[0-9]+\\.[0-9]+\\.[0-9]+'/'${new_version}'/" "$PLUGIN_FILE"
-sed -i '' -E "/wp_enqueue_script\\('sml-admin'/ s/'[0-9]+\\.[0-9]+\\.[0-9]+'/'${new_version}'/" "$PLUGIN_FILE"
-sed -i '' -E "/wp_enqueue_style\\('sml-frontend'/ s/'[0-9]+\\.[0-9]+\\.[0-9]+'/'${new_version}'/" "$PLUGIN_FILE"
+# Keep asset versions in sync for cache busting (line-based, safe).
+perl -i -pe "if (/wp_enqueue_style\\('sml-admin'/) { s/'\\d+\\.\\d+\\.\\d+'/'${new_version}'/; }" "$PLUGIN_FILE"
+perl -i -pe "if (/wp_enqueue_script\\('sml-admin'/) { s/'\\d+\\.\\d+\\.\\d+'/'${new_version}'/; }" "$PLUGIN_FILE"
+
+CROWDBOOK_FILE="$ROOT_DIR/crowdbook/crowdbook.php"
+if [[ -f "$CROWDBOOK_FILE" ]]; then
+  perl -i -pe "if (/wp_enqueue_style\\(\\s*'crowdbook-css'/) { s/'\\d+\\.\\d+\\.\\d+'/'${new_version}'/; }" "$CROWDBOOK_FILE"
+  perl -i -pe "if (/wp_enqueue_script\\(\\s*'crowdbook-js'/) { s/'\\d+\\.\\d+\\.\\d+'/'${new_version}'/; }" "$CROWDBOOK_FILE"
+fi
+
+# Remove hidden control chars that can break PHP parsing (keeps tab/newline/carriage return).
+find "$ROOT_DIR" -name '*.php' -type f -print0 | xargs -0 perl -i -pe 's/[\x00-\x08\x0B\x0C\x0E-\x1F]//g'
 
 zip_versioned="$ROOT_DIR/${PLUGIN_DIR_NAME}-${new_version}.zip"
 zip_latest="$ROOT_DIR/${PLUGIN_DIR_NAME}.zip"
@@ -82,6 +95,13 @@ rm -f "$zip_versioned" "$zip_latest"
 )
 
 cp "$zip_versioned" "$zip_latest"
+
+if command -v php >/dev/null 2>&1; then
+  php -l "$PLUGIN_FILE" >/dev/null
+  if [[ -f "$CROWDBOOK_FILE" ]]; then
+    php -l "$CROWDBOOK_FILE" >/dev/null
+  fi
+fi
 
 echo "Version: ${current_version} -> ${new_version}"
 echo "ZIP: $zip_versioned"
