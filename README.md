@@ -4,6 +4,15 @@
 
 SML/Twig/Markdown compilation is still included, but it is supporting tooling, not the core focus.
 
+## Purpose
+
+CrowdBook exists to enable open, free books that can evolve over time with community contributions.
+
+- readers get free access to knowledge and stories
+- authors can add chapters and improve books collaboratively
+- moderation keeps quality high while preserving openness
+- published content stays stable, while new versions can be reviewed before going live
+
 ## CrowdBook first: core features
 
 - Public routes: `/books`, `/book/{book-id}`, `/dashboard`, `/editor`, `/login`, `/register`
