@@ -154,9 +154,11 @@ class CrowdBook_Frontend_Book_Index
             echo '</nav>';
         }
 
-        $logged_in = $this->users->get_current_user();
-        $cta_url = $logged_in ? home_url('/editor') : home_url('/login');
-        echo '<footer class="crowdbook-index-footer"><a class="btn btn-primary crowdbook-nav-btn" href="' . esc_url($cta_url) . '">' . esc_html__('Schreib deinen eigenen Weg', 'crowdbook') . '</a></footer>';
+        if ($book && (int) ($book->is_extendable ?? 1) === 1) {
+            $logged_in = $this->users->get_current_user();
+            $cta_url   = $logged_in ? home_url('/editor') : home_url('/login');
+            echo '<footer class="crowdbook-index-footer"><a class="btn btn-primary crowdbook-nav-btn" href="' . esc_url($cta_url) . '">' . esc_html__('Schreib deinen eigenen Weg', 'crowdbook') . '</a></footer>';
+        }
 
         echo '</section>';
 

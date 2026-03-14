@@ -57,7 +57,10 @@ class CrowdBook_Frontend_Editor
             }
         }
 
-        $available_books = $this->books->get_active();
+        $available_books = array_values(array_filter(
+            $this->books->get_active(),
+            fn($book) => is_object($book) && $this->books->can_user_extend_book($book, (int) $user->id)
+        ));
 
         if (!$chapter && $selected_book_id === '' && $available_books !== []) {
             $selected_book_id = sanitize_key((string) $available_books[0]->book_id);

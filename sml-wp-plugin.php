@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: Forge WP SML Compiler
+ * Plugin Name: CrowdBooks
  * Plugin URI: https://codeberg.org/CrowdWare/ForgeCrowdBook
- * Description: SML Compiler for WordPress: build pages with SML, Twig and Markdown, then ship super fast static HTML.
- * Version: 0.1.65
+ * Description: Community-driven collaborative book platform: write, moderate and publish branching stories together.
+ * Version: 0.1.95
  * Author: Artanidos
  * Author URI: https://codeberg.org/CrowdWare
  */
@@ -709,9 +709,9 @@ class SML_Pages_Plugin
             return;
         }
 
-        wp_enqueue_style('sml-admin', plugins_url('assets/sml-admin.css', __FILE__), [], '0.1.65');
+        wp_enqueue_style('sml-admin', plugins_url('assets/sml-admin.css', __FILE__), [], '0.1.95');
         wp_enqueue_script('sml-monaco-loader', 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js', [], null, true);
-        wp_enqueue_script('sml-admin', plugins_url('assets/sml-admin.js', __FILE__), ['sml-monaco-loader'], '0.1.65', true);
+        wp_enqueue_script('sml-admin', plugins_url('assets/sml-admin.js', __FILE__), ['sml-monaco-loader'], '0.1.95', true);
 
         $language_config_path = __DIR__ . '/language-configuration.json';
         $grammar_path = __DIR__ . '/sml.tmLanguage.json';

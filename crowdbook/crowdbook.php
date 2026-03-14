@@ -10,6 +10,7 @@ require_once __DIR__ . '/includes/class-users.php';
 require_once __DIR__ . '/includes/class-auth.php';
 require_once __DIR__ . '/includes/class-spam-filter.php';
 require_once __DIR__ . '/includes/class-sml-renderer.php';
+require_once __DIR__ . '/includes/class-reputation.php';
 require_once __DIR__ . '/includes/class-chapters.php';
 require_once __DIR__ . '/includes/class-likes.php';
 require_once __DIR__ . '/includes/class-social.php';
@@ -26,10 +27,11 @@ require_once __DIR__ . '/admin/chapters-page.php';
 require_once __DIR__ . '/admin/users-page.php';
 require_once __DIR__ . '/admin/dashboard-page.php';
 require_once __DIR__ . '/admin/books-page.php';
+require_once __DIR__ . '/admin/settings-page.php';
 
 class CrowdBook_Plugin
 {
-    private const DB_VERSION = '3.4.1';
+    private const DB_VERSION = '3.4.2';
     private const CAP_MODERATE = 'moderate_crowdbook';
 
     private CrowdBook_Mailer $mailer;
@@ -50,10 +52,14 @@ class CrowdBook_Plugin
     private CrowdBook_Frontend_Book_Index $frontend_book_index;
     private CrowdBook_Frontend_Books $frontend_books;
 
+    private ?string $pending_crowdbook_content = null;
+
+    private CrowdBook_Reputation $reputation;
     private CrowdBook_Admin_Chapters_Page $admin_chapters;
     private CrowdBook_Admin_Users_Page $admin_users;
     private CrowdBook_Admin_Dashboard_Page $admin_dashboard;
     private CrowdBook_Admin_Books_Page $admin_books;
+    private CrowdBook_Admin_Settings_Page $admin_settings;
 
     public function __construct()
     {
@@ -63,14 +69,15 @@ class CrowdBook_Plugin
         $this->auth = new CrowdBook_Auth($this->users, $this->mailer);
         $this->spam_filter = new CrowdBook_Spam_Filter();
         $this->sml_renderer = new CrowdBook_SML_Renderer();
-        $this->chapters = new CrowdBook_Chapters($this->users, $this->spam_filter, $this->sml_renderer, $this->mailer);
+        $this->reputation = new CrowdBook_Reputation();
+        $this->chapters = new CrowdBook_Chapters($this->users, $this->spam_filter, $this->sml_renderer, $this->mailer, $this->reputation);
         $this->likes = new CrowdBook_Likes($this->users, $this->chapters, $this->mailer);
         $this->social = new CrowdBook_Social($this->chapters);
 
         $this->frontend_auth = new CrowdBook_Frontend_Auth();
         $this->frontend_login = new CrowdBook_Frontend_Login($this->auth, $this->users);
         $this->frontend_register = new CrowdBook_Frontend_Register($this->auth, $this->users);
-        $this->frontend_dashboard = new CrowdBook_Frontend_Dashboard($this->users, $this->chapters, $this->books);
+        $this->frontend_dashboard = new CrowdBook_Frontend_Dashboard($this->users, $this->chapters, $this->books, $this->reputation);
         $this->frontend_editor = new CrowdBook_Frontend_Editor($this->users, $this->books, $this->chapters, $this->frontend_login);
         $this->frontend_book_index = new CrowdBook_Frontend_Book_Index($this->chapters, $this->users, $this->books, $this->sml_renderer);
         $this->frontend_books = new CrowdBook_Frontend_Books($this->books, $this->chapters, $this->sml_renderer);
@@ -79,13 +86,15 @@ class CrowdBook_Plugin
         $this->admin_users = new CrowdBook_Admin_Users_Page($this->users, $this->chapters);
         $this->admin_dashboard = new CrowdBook_Admin_Dashboard_Page($this->books, $this->chapters);
         $this->admin_books = new CrowdBook_Admin_Books_Page($this->books);
+        $this->admin_settings = new CrowdBook_Admin_Settings_Page($this->reputation);
 
         add_action('init', [$this, 'bootstrap_session'], 1);
         add_action('init', [$this, 'maybe_upgrade'], 2);
         add_action('init', [$this, 'ensure_roles'], 3);
         add_action('init', [$this, 'register_rewrites']);
         add_filter('query_vars', [$this, 'register_query_vars']);
-        add_action('template_redirect', [$this, 'handle_front_routes']);
+        add_action('template_redirect', [$this, 'handle_front_routes'], 0);
+        add_filter('template_include', [$this, 'crowdbook_template_include'], 99);
 
         add_action('init', [$this, 'register_shortcodes']);
         add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
@@ -213,7 +222,7 @@ class CrowdBook_Plugin
             'crowdbook-css',
             plugins_url('assets/crowdbook.css', __FILE__),
             [],
-            '0.1.65'
+            '0.1.95'
         );
 
         wp_enqueue_script('sml-monaco-loader', 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js', [], null, true);
@@ -229,7 +238,7 @@ class CrowdBook_Plugin
             'crowdbook-js',
             plugins_url('assets/crowdbook.js', __FILE__),
             ['sml-monaco-loader', 'crowdbook-isotope'],
-            '0.1.65',
+            '0.1.95',
             true
         );
 
@@ -251,8 +260,8 @@ class CrowdBook_Plugin
     public function register_admin_menu(): void
     {
         add_menu_page(
-            __('CrowdBook', 'crowdbook'),
-            __('CrowdBook', 'crowdbook'),
+            __('CrowdBooks', 'crowdbook'),
+            __('CrowdBooks', 'crowdbook'),
             self::CAP_MODERATE,
             'crowdbook-dashboard',
             function (): void {
@@ -297,6 +306,18 @@ class CrowdBook_Plugin
                 $this->admin_users->render();
             }
         );
+
+        add_submenu_page(
+            'crowdbook-dashboard',
+            __('Einstellungen', 'crowdbook'),
+            __('Einstellungen', 'crowdbook'),
+            'manage_options',
+            'crowdbook-settings',
+            function (): void {
+                $this->admin_settings->handle_actions();
+                $this->admin_settings->render();
+            }
+        );
     }
 
     public function handle_front_routes(): void
@@ -316,37 +337,30 @@ class CrowdBook_Plugin
 
         if ((int) get_query_var('crowdbook_login') === 1) {
             $this->render_public_page(__('Login', 'crowdbook'), $this->frontend_login->render());
-            exit;
+            return;
         }
 
         if ((int) get_query_var('crowdbook_register') === 1) {
             $this->render_public_page(__('Registrierung', 'crowdbook'), $this->frontend_register->render());
-            exit;
+            return;
         }
 
         if ((int) get_query_var('crowdbook_dashboard') === 1) {
             $this->render_public_page(__('Dashboard', 'crowdbook'), $this->frontend_dashboard->render());
-            exit;
+            return;
         }
 
         if ((int) get_query_var('crowdbook_editor') === 1) {
             $this->render_public_page(__('Editor', 'crowdbook'), $this->frontend_editor->render());
-            exit;
+            return;
         }
 
         if ((int) get_query_var('crowdbook_books') === 1) {
             $this->render_public_page(__('Alle Bücher', 'crowdbook'), $this->frontend_books->render());
-            exit;
+            return;
         }
 
-        $book = get_query_var('crowdbook_book');
-        if ((!is_string($book) || $book === '') && isset($_SERVER['REQUEST_URI'])) {
-            $path = parse_url((string) $_SERVER['REQUEST_URI'], PHP_URL_PATH);
-            $path = is_string($path) ? trim($path, '/') : '';
-            if (preg_match('#^book/([^/]+)$#', $path, $m)) {
-                $book = sanitize_key((string) $m[1]);
-            }
-        }
+        $book = $this->resolve_requested_book_id();
         if (is_string($book) && $book !== '') {
             $book_row = $this->books->get_by_book_id($book);
             $admin_preview = isset($_GET['preview']) && $_GET['preview'] === '1' && current_user_can(self::CAP_MODERATE);
@@ -363,13 +377,13 @@ class CrowdBook_Plugin
                 : $book_row;
             $page_title = $display_book ? (string) $display_book->title : __('Buch', 'crowdbook');
             $this->render_public_page($page_title, $this->frontend_book_index->render(['book' => $book]));
-            exit;
+            return;
         }
 
         $slug = get_query_var('crowdbook_chapter');
         if (is_string($slug) && $slug !== '') {
             $this->render_chapter_page($slug);
-            exit;
+            return;
         }
     }
 
@@ -390,6 +404,7 @@ class CrowdBook_Plugin
 
         status_header(200);
         nocache_headers();
+        $this->setup_virtual_page((string) $chapter->title, '');
 
         $pending_preview = $admin_preview
             && (string) $chapter->status === 'published'
@@ -435,15 +450,12 @@ class CrowdBook_Plugin
         }
         $body .= '</section>';
 
-        get_header();
-        echo '<div id="wrapper">';
-        echo '<section class="container main-content">';
-        echo '<article class="white-row crowdbook-page crowdbook-reader">';
-        echo '<div class="entry-content crowdbook-content">' . $body . '</div>';
-        echo '</article>';
-        echo '</section>';
-        echo '</div>';
-        get_footer();
+        $this->pending_crowdbook_content =
+            '<div class="crowdbook-page-wrap">' .
+            '<article class="crowdbook-page crowdbook-reader">' .
+            '<div class="entry-content crowdbook-content">' . $body . '</div>' .
+            '</article>' .
+            '</div>';
     }
 
     private function chapter_static_file(string $slug): string
@@ -460,7 +472,7 @@ class CrowdBook_Plugin
             return true;
         }
 
-        $book = get_query_var('crowdbook_book');
+        $book = $this->resolve_requested_book_id();
         if (is_string($book) && $book !== '') {
             return true;
         }
@@ -479,21 +491,136 @@ class CrowdBook_Plugin
         return str_contains($content, '[crowdbook_') || str_contains($content, '[crowdbook_register]') || str_contains($content, '[crowdbook_books]');
     }
 
+    private function resolve_requested_book_id(): string
+    {
+        $book = get_query_var('crowdbook_book');
+        if (is_string($book)) {
+            $book = sanitize_key($book);
+            if ($book !== '') {
+                return $book;
+            }
+        }
+
+        $pagename = get_query_var('pagename');
+        if (is_string($pagename) && $pagename !== '') {
+            if (preg_match('#(?:^|/)book/([^/]+)$#i', trim($pagename, '/'), $match) === 1) {
+                $book = sanitize_key(rawurldecode((string) $match[1]));
+                if ($book !== '') {
+                    return $book;
+                }
+            }
+        }
+
+        $path = isset($_SERVER['REQUEST_URI']) ? (string) parse_url((string) $_SERVER['REQUEST_URI'], PHP_URL_PATH) : '';
+        $home_path = (string) parse_url(home_url('/'), PHP_URL_PATH);
+        $home_path = trim($home_path, '/');
+        $path = trim($path, '/');
+        if ($home_path !== '' && str_starts_with($path, $home_path . '/')) {
+            $path = substr($path, strlen($home_path) + 1);
+        } elseif ($home_path !== '' && $path === $home_path) {
+            $path = '';
+        }
+
+        if ($path !== '' && preg_match('#(?:^|/)book/([^/]+)$#i', $path, $match) === 1) {
+            $book = sanitize_key(rawurldecode((string) $match[1]));
+            if ($book !== '') {
+                return $book;
+            }
+        }
+
+        return '';
+    }
+
     private function render_public_page(string $title, string $body): void
     {
         status_header(200);
         nocache_headers();
+        $this->setup_virtual_page($title, '');
 
-        get_header();
-        echo '<div id="wrapper">';
-        echo '<section class="container main-content">';
-        echo '<article class="white-row crowdbook-page crowdbook-reader">';
-        echo '<header class="entry-header"><h1 class="entry-title">' . esc_html($title) . '</h1></header>';
-        echo '<div class="entry-content crowdbook-content">' . $body . '</div>';
-        echo '</article>';
-        echo '</section>';
-        echo '</div>';
-        get_footer();
+        $this->pending_crowdbook_content =
+            '<div class="crowdbook-page-wrap">' .
+            '<article class="crowdbook-page crowdbook-reader">' .
+            '<header class="entry-header"><h1 class="entry-title">' . esc_html($title) . '</h1></header>' .
+            '<div class="entry-content crowdbook-content">' . $body . '</div>' .
+            '</article>' .
+            '</div>';
+    }
+
+    public function crowdbook_template_include(string $template): string
+    {
+        if ($this->pending_crowdbook_content === null) {
+            return $template;
+        }
+
+        $pending = $this->pending_crowdbook_content;
+
+        // Classic themes: the theme's page.php calls the_content().
+        add_filter('the_content', static function () use ($pending): string {
+            return $pending;
+        }, PHP_INT_MAX);
+
+        // FSE/block themes: core/post-content block may return '' before
+        // reaching apply_filters('the_content') when the virtual post ID is 0.
+        // Hook the rendered block output directly as a guaranteed fallback.
+        add_filter('render_block_core/post-content', static function (string $block_content) use ($pending): string {
+            if (trim($block_content) !== '') {
+                // the_content filter already injected content — don't double-inject.
+                return $block_content;
+            }
+            return '<div class="entry-content crowdbook-content">' . $pending . '</div>';
+        }, PHP_INT_MAX);
+
+        $theme_template = locate_template(['page.php', 'singular.php', 'index.php']);
+        return $theme_template !== '' ? $theme_template : $template;
+    }
+
+    private function setup_virtual_page(string $title, string $content): void
+    {
+        global $post, $wp_query;
+
+        if (!($wp_query instanceof WP_Query)) {
+            return;
+        }
+
+        $wp_query->is_404 = false;
+        $wp_query->is_home = false;
+        $wp_query->is_archive = false;
+        $wp_query->is_search = false;
+        $wp_query->is_feed = false;
+        $wp_query->is_page = true;
+        $wp_query->is_singular = true;
+
+        $fake = new stdClass();
+        $fake->ID = 0;
+        $fake->post_title = $title;
+        $fake->post_content = $content;
+        $fake->post_name = sanitize_title($title);
+        $fake->post_type = 'page';
+        $fake->post_status = 'publish';
+        $fake->comment_status = 'closed';
+        $fake->ping_status = 'closed';
+        $fake->comment_count = 0;
+        $fake->post_date = current_time('mysql');
+        $fake->post_date_gmt = current_time('mysql', true);
+        $fake->post_modified = current_time('mysql');
+        $fake->post_modified_gmt = current_time('mysql', true);
+        $fake->post_author = 0;
+        $fake->post_password = '';
+        $fake->post_excerpt = '';
+        $fake->post_parent = 0;
+        $fake->menu_order = 0;
+        $fake->guid = home_url('/');
+        $fake->filter = 'raw';
+        $fake->post_mime_type = '';
+
+        $post = $fake;
+        $wp_query->post = $fake;
+        $wp_query->posts = [$fake];
+        $wp_query->found_posts = 1;
+        $wp_query->post_count = 1;
+        $wp_query->queried_object = $fake;
+
+        setup_postdata($post);
     }
 
     public function ajax_upload_image(): void
@@ -698,6 +825,7 @@ class CrowdBook_Plugin
             pending_markdown_content LONGTEXT NULL,
             pending_status ENUM('none', 'draft', 'pending', 'rejected') DEFAULT 'none',
             pending_spam_score FLOAT DEFAULT 0.0,
+            rejection_feedback TEXT NULL,
             like_count INT DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             published_at DATETIME NULL,
@@ -729,16 +857,16 @@ class CrowdBook_Plugin
     {
         $moderator = get_role('crowdbook_moderator');
         if (!$moderator) {
-            add_role('crowdbook_moderator', 'CrowdBook Moderator', [
+            add_role('crowdbook_moderator', 'CrowdBooks Moderator', [
                 'read' => true,
                 self::CAP_MODERATE => true,
             ]);
-        } else {
+        } elseif (empty($moderator->capabilities[self::CAP_MODERATE])) {
             $moderator->add_cap(self::CAP_MODERATE);
         }
 
         $admin = get_role('administrator');
-        if ($admin) {
+        if ($admin && empty($admin->capabilities[self::CAP_MODERATE])) {
             $admin->add_cap(self::CAP_MODERATE);
         }
     }

@@ -64,7 +64,9 @@ class CrowdBook_Books
         string $description = '',
         string $prologue_markdown = '',
         string $cover_image_url = '',
-        string $status = 'pending'
+        string $status = 'pending',
+        int $created_by_user_id = 0,
+        bool $is_extendable = true
     ): array
     {
         global $wpdb;
@@ -75,6 +77,8 @@ class CrowdBook_Books
         $prologue_markdown = wp_kses_post($prologue_markdown);
         $cover_image_url = esc_url_raw($cover_image_url);
         $status = sanitize_key($status);
+        $created_by_user_id = max(0, (int) $created_by_user_id);
+        $is_extendable_db = $is_extendable ? 1 : 0;
         if (!in_array($status, ['pending', 'active', 'archived'], true)) {
             $status = 'pending';
         }
@@ -96,10 +100,12 @@ class CrowdBook_Books
                 'prologue_markdown' => $prologue_markdown,
                 'cover_image_url' => $cover_image_url,
                 'status' => $status,
+                'created_by_user_id' => $created_by_user_id,
+                'is_extendable' => $is_extendable_db,
                 'created_at' => current_time('mysql'),
                 'updated_at' => current_time('mysql'),
             ],
-            ['%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
+            ['%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s', '%s']
         );
 
         if (!$inserted) {
@@ -150,7 +156,9 @@ class CrowdBook_Books
         string $title,
         string $description = '',
         string $prologue_markdown = '',
-        string $cover_image_url = ''
+        string $cover_image_url = '',
+        ?bool $is_extendable = null,
+        int $actor_user_id = 0
     ): array
     {
         global $wpdb;
@@ -160,6 +168,8 @@ class CrowdBook_Books
         $description = sanitize_textarea_field($description);
         $prologue_markdown = wp_kses_post($prologue_markdown);
         $cover_image_url = esc_url_raw($cover_image_url);
+        $is_extendable_db = $is_extendable === null ? null : ($is_extendable ? 1 : 0);
+        $actor_user_id = max(0, (int) $actor_user_id);
 
         if ($book_id === '' || $title === '') {
             return ['ok' => false, 'message' => __('Book ID und Titel sind erforderlich.', 'crowdbook')];
@@ -171,18 +181,29 @@ class CrowdBook_Books
         }
 
         if ((string) ($existing->status ?? '') === 'active') {
+            $pending_update_data = [
+                'pending_title' => $title,
+                'pending_description' => $description,
+                'pending_prologue_markdown' => $prologue_markdown,
+                'pending_cover_image_url' => $cover_image_url,
+                'pending_status' => 'pending',
+                'updated_at' => current_time('mysql'),
+            ];
+            $pending_update_format = ['%s', '%s', '%s', '%s', '%s', '%s'];
+            if ($is_extendable_db !== null) {
+                $pending_update_data['pending_is_extendable'] = $is_extendable_db;
+                $pending_update_format[] = '%d';
+            }
+            if ((int) ($existing->created_by_user_id ?? 0) === 0 && $actor_user_id > 0) {
+                $pending_update_data['created_by_user_id'] = $actor_user_id;
+                $pending_update_format[] = '%d';
+            }
+
             $pending_update = $wpdb->update(
                 $this->table_name(),
-                [
-                    'pending_title' => $title,
-                    'pending_description' => $description,
-                    'pending_prologue_markdown' => $prologue_markdown,
-                    'pending_cover_image_url' => $cover_image_url,
-                    'pending_status' => 'pending',
-                    'updated_at' => current_time('mysql'),
-                ],
+                $pending_update_data,
                 ['book_id' => $book_id],
-                ['%s', '%s', '%s', '%s', '%s', '%s'],
+                $pending_update_format,
                 ['%s']
             );
 
@@ -193,22 +214,34 @@ class CrowdBook_Books
             return ['ok' => true, 'message' => __('Buchänderung wurde eingereicht und wartet auf Freigabe. Live-Version bleibt sichtbar.', 'crowdbook')];
         }
 
+        $update_data = [
+            'title' => $title,
+            'description' => $description,
+            'prologue_markdown' => $prologue_markdown,
+            'cover_image_url' => $cover_image_url,
+            'pending_title' => null,
+            'pending_description' => null,
+            'pending_prologue_markdown' => null,
+            'pending_cover_image_url' => null,
+            'pending_is_extendable' => null,
+            'pending_status' => 'none',
+            'updated_at' => current_time('mysql'),
+        ];
+        $update_format = ['%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s'];
+        if ($is_extendable_db !== null) {
+            $update_data['is_extendable'] = $is_extendable_db;
+            $update_format[] = '%d';
+        }
+        if ((int) ($existing->created_by_user_id ?? 0) === 0 && $actor_user_id > 0) {
+            $update_data['created_by_user_id'] = $actor_user_id;
+            $update_format[] = '%d';
+        }
+
         $updated = $wpdb->update(
             $this->table_name(),
-            [
-                'title' => $title,
-                'description' => $description,
-                'prologue_markdown' => $prologue_markdown,
-                'cover_image_url' => $cover_image_url,
-                'pending_title' => null,
-                'pending_description' => null,
-                'pending_prologue_markdown' => null,
-                'pending_cover_image_url' => null,
-                'pending_status' => 'none',
-                'updated_at' => current_time('mysql'),
-            ],
+            $update_data,
             ['book_id' => $book_id],
-            ['%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s'],
+            $update_format,
             ['%s']
         );
 
@@ -274,7 +307,8 @@ class CrowdBook_Books
         return trim((string) ($book->pending_title ?? '')) !== ''
             || trim((string) ($book->pending_description ?? '')) !== ''
             || trim((string) ($book->pending_prologue_markdown ?? '')) !== ''
-            || trim((string) ($book->pending_cover_image_url ?? '')) !== '';
+            || trim((string) ($book->pending_cover_image_url ?? '')) !== ''
+            || (($book->pending_is_extendable ?? null) !== null);
     }
 
     public function get_effective_preview(object $book): object
@@ -288,6 +322,9 @@ class CrowdBook_Books
         $preview->description = (string) ($book->pending_description ?? $book->description);
         $preview->prologue_markdown = (string) ($book->pending_prologue_markdown ?? $book->prologue_markdown);
         $preview->cover_image_url = (string) ($book->pending_cover_image_url ?? $book->cover_image_url);
+        if (($book->pending_is_extendable ?? null) !== null) {
+            $preview->is_extendable = (int) $book->pending_is_extendable;
+        }
 
         return $preview;
     }
@@ -331,19 +368,40 @@ class CrowdBook_Books
                 'description' => (string) ($book->pending_description ?? $book->description),
                 'prologue_markdown' => (string) ($book->pending_prologue_markdown ?? $book->prologue_markdown),
                 'cover_image_url' => (string) ($book->pending_cover_image_url ?? $book->cover_image_url),
+                'is_extendable' => ($book->pending_is_extendable ?? null) !== null ? (int) $book->pending_is_extendable : (int) ($book->is_extendable ?? 1),
                 'status' => 'active',
                 'pending_title' => null,
                 'pending_description' => null,
                 'pending_prologue_markdown' => null,
                 'pending_cover_image_url' => null,
+                'pending_is_extendable' => null,
                 'pending_status' => 'none',
                 'updated_at' => current_time('mysql'),
             ],
             ['book_id' => $book_id],
-            ['%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s'],
+            ['%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s'],
             ['%s']
         );
 
         return $updated !== false;
+    }
+
+    public function is_extendable(object $book): bool
+    {
+        return (int) ($book->is_extendable ?? 1) === 1;
+    }
+
+    public function is_owner(object $book, int $user_id): bool
+    {
+        return $user_id > 0 && (int) ($book->created_by_user_id ?? 0) === $user_id;
+    }
+
+    public function can_user_extend_book(object $book, int $user_id): bool
+    {
+        if ($this->is_extendable($book)) {
+            return true;
+        }
+
+        return $this->is_owner($book, $user_id);
     }
 }

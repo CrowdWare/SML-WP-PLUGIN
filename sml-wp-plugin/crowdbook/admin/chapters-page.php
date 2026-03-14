@@ -21,6 +21,21 @@ class CrowdBook_Admin_Chapters_Page
             return;
         }
 
+        // Reject is POST-only to enforce mandatory feedback.
+        if (
+            $_SERVER['REQUEST_METHOD'] === 'POST'
+            && isset($_POST['cb_action'])
+            && (string) $_POST['cb_action'] === 'reject'
+        ) {
+            $chapter_id = isset($_POST['chapter_id']) ? (int) $_POST['chapter_id'] : 0;
+            $nonce = isset($_POST['_wpnonce']) ? sanitize_text_field((string) wp_unslash($_POST['_wpnonce'])) : '';
+            if ($chapter_id > 0 && wp_verify_nonce($nonce, 'crowdbook_admin_chapter_' . $chapter_id . '_reject')) {
+                $feedback = sanitize_textarea_field((string) wp_unslash($_POST['rejection_feedback'] ?? ''));
+                $this->chapters->moderate_status($chapter_id, 'rejected', $feedback);
+            }
+            return;
+        }
+
         $action = isset($_GET['cb_action']) ? sanitize_key((string) $_GET['cb_action']) : '';
         $chapter_id = isset($_GET['chapter_id']) ? (int) $_GET['chapter_id'] : 0;
         $nonce = isset($_GET['_wpnonce']) ? sanitize_text_field((string) $_GET['_wpnonce']) : '';
@@ -35,8 +50,6 @@ class CrowdBook_Admin_Chapters_Page
 
         if ($action === 'publish') {
             $this->chapters->moderate_status($chapter_id, 'published');
-        } elseif ($action === 'reject') {
-            $this->chapters->moderate_status($chapter_id, 'rejected');
         } elseif ($action === 'draft') {
             $this->chapters->moderate_status($chapter_id, 'draft');
         } elseif ($action === 'delete') {
@@ -58,7 +71,7 @@ class CrowdBook_Admin_Chapters_Page
         );
         $books = $this->books->get_all();
 
-        echo '<div class="wrap"><h1>CrowdBook – Kapitel Moderation</h1>';
+        echo '<div class="wrap"><h1>CrowdBooks – Kapitel Moderation</h1>';
         echo '<p>';
         echo '<a href="' . esc_url(admin_url('admin.php?page=crowdbook-chapters')) . '">Alle</a> | ';
         echo '<a href="' . esc_url(add_query_arg('status', 'draft', admin_url('admin.php?page=crowdbook-chapters'))) . '">Draft</a> | ';
@@ -90,11 +103,7 @@ class CrowdBook_Admin_Chapters_Page
                 'chapter_id' => (int) $row->id,
             ], admin_url('admin.php')), 'crowdbook_admin_chapter_' . (int) $row->id . '_publish');
 
-            $reject_url = wp_nonce_url(add_query_arg([
-                'page' => 'crowdbook-chapters',
-                'cb_action' => 'reject',
-                'chapter_id' => (int) $row->id,
-            ], admin_url('admin.php')), 'crowdbook_admin_chapter_' . (int) $row->id . '_reject');
+            $reject_nonce = wp_create_nonce('crowdbook_admin_chapter_' . (int) $row->id . '_reject');
 
             $delete_url = wp_nonce_url(add_query_arg([
                 'page' => 'crowdbook-chapters',
@@ -137,7 +146,20 @@ class CrowdBook_Admin_Chapters_Page
             echo '<td>';
             echo '<a href="' . esc_url($preview_url) . '" target="_blank" rel="noopener">Vorschau</a> | ';
             echo '<a href="' . esc_url($publish_url) . '">Publizieren</a> | ';
-            echo '<a href="' . esc_url($reject_url) . '">Ablehnen</a> | ';
+            echo '<details class="cb-reject-details" style="display:inline-block">';
+            echo '<summary style="cursor:pointer;color:#b32d2e;">Ablehnen</summary>';
+            echo '<div style="margin-top:6px;padding:8px;background:#fff3cd;border:1px solid #e6a817;border-radius:4px;">';
+            echo '<form method="post" action="' . esc_url(admin_url('admin.php?page=crowdbook-chapters')) . '">';
+            echo '<input type="hidden" name="cb_action" value="reject">';
+            echo '<input type="hidden" name="chapter_id" value="' . (int) $row->id . '">';
+            echo '<input type="hidden" name="_wpnonce" value="' . esc_attr($reject_nonce) . '">';
+            echo '<label style="display:block;margin-bottom:4px;font-weight:600;">Feedback für den Autor (Pflicht):</label>';
+            echo '<textarea name="rejection_feedback" rows="3" style="width:100%;min-width:280px;" required placeholder="' . esc_attr__('Was soll der Autor überarbeiten?', 'crowdbook') . '"></textarea>';
+            echo '<div style="margin-top:6px;"><button type="submit" class="button button-secondary" style="color:#b32d2e;">Ablehnen bestätigen</button></div>';
+            echo '</form>';
+            echo '</div>';
+            echo '</details>';
+            echo ' | ';
             echo '<a href="' . esc_url($delete_url) . '">Löschen</a>';
             echo '</td>';
             echo '</tr>';

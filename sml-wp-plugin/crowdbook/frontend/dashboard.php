@@ -9,12 +9,14 @@ class CrowdBook_Frontend_Dashboard
     private CrowdBook_Users $users;
     private CrowdBook_Chapters $chapters;
     private CrowdBook_Books $books;
+    private CrowdBook_Reputation $reputation;
 
-    public function __construct(CrowdBook_Users $users, CrowdBook_Chapters $chapters, CrowdBook_Books $books)
+    public function __construct(CrowdBook_Users $users, CrowdBook_Chapters $chapters, CrowdBook_Books $books, CrowdBook_Reputation $reputation)
     {
         $this->users = $users;
         $this->chapters = $chapters;
         $this->books = $books;
+        $this->reputation = $reputation;
     }
 
     public function render(): string
@@ -34,6 +36,7 @@ class CrowdBook_Frontend_Dashboard
         $form_description = $book_to_edit ? (string) $book_to_edit->description : '';
         $form_prologue = $book_to_edit ? (string) $book_to_edit->prologue_markdown : '';
         $form_cover = $book_to_edit ? (string) ($book_to_edit->cover_image_url ?? '') : '';
+        $form_is_extendable = $book_to_edit ? ((int) ($book_to_edit->is_extendable ?? 1) === 1) : true;
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['crowdbook_dashboard_create_book'])) {
             if (!isset($_POST['crowdbook_dashboard_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['crowdbook_dashboard_nonce'])), 'crowdbook_dashboard')) {
@@ -44,10 +47,11 @@ class CrowdBook_Frontend_Dashboard
                 $description = sanitize_textarea_field((string) wp_unslash($_POST['book_description'] ?? ''));
                 $prologue = (string) wp_unslash($_POST['book_prologue_markdown'] ?? '');
                 $cover = esc_url_raw((string) wp_unslash($_POST['book_cover_image_url'] ?? ''));
+                $is_extendable = isset($_POST['book_is_extendable']) && (string) $_POST['book_is_extendable'] === '1';
                 $is_edit = isset($_POST['crowdbook_dashboard_update_book']) && $_POST['crowdbook_dashboard_update_book'] === '1';
                 $result = $is_edit
-                    ? $this->books->update_book($book_id, $title, $description, $prologue, $cover)
-                    : $this->books->create_book($book_id, $title, $description, $prologue, $cover);
+                    ? $this->books->update_book($book_id, $title, $description, $prologue, $cover, $is_extendable, (int) $user->id)
+                    : $this->books->create_book($book_id, $title, $description, $prologue, $cover, 'pending', (int) $user->id, $is_extendable);
                 $book_notice = '<div class="crowdbook-notice ' . esc_attr($result['ok'] ? 'success' : 'error') . '">' . esc_html((string) $result['message']) . '</div>';
                 $books = $this->books->get_all();
                 if ($result['ok']) {
@@ -58,6 +62,7 @@ class CrowdBook_Frontend_Dashboard
                     $form_description = '';
                     $form_prologue = '';
                     $form_cover = '';
+                    $form_is_extendable = true;
                 }
             }
         }
@@ -68,6 +73,34 @@ class CrowdBook_Frontend_Dashboard
         echo '<p>' . sprintf(esc_html__('Eingeloggt als %s', 'crowdbook'), esc_html((string) $user->display_name)) . '</p>';
         echo '<p><a class="button" href="' . esc_url(home_url('/editor')) . '">' . esc_html__('Neues Kapitel schreiben', 'crowdbook') . '</a> ';
         echo '<a class="button" href="' . esc_url(add_query_arg('crowdbook_logout', '1', home_url('/'))) . '">' . esc_html__('Logout', 'crowdbook') . '</a></p>';
+
+        $rep = $this->reputation->progress((int) $user->id);
+        if ($rep['trusted']) {
+            echo '<div class="crowdbook-reputation-trusted">';
+            echo '<strong>' . esc_html__('Vertrauenswürdiger Autor', 'crowdbook') . '</strong> — ';
+            echo esc_html__('Deine Kapitel werden direkt veröffentlicht. Die Community hat dir ihr Vertrauen gegeben.', 'crowdbook');
+            echo '</div>';
+        } else {
+            $chapters_ok = $rep['published_chapters'] >= $rep['min_chapters'];
+            $likes_ok    = $rep['total_likes'] >= $rep['min_likes'];
+            echo '<div class="crowdbook-reputation-progress">';
+            echo '<p><strong>' . esc_html__('Dein Weg zur direkten Veröffentlichung', 'crowdbook') . '</strong></p>';
+            echo '<ul>';
+            echo '<li class="' . ($chapters_ok ? 'rep-done' : 'rep-open') . '">';
+            echo ($chapters_ok ? '✓ ' : '○ ') . sprintf(
+                esc_html__('%1$d / %2$d veröffentlichte Kapitel', 'crowdbook'),
+                $rep['published_chapters'], $rep['min_chapters']
+            );
+            echo '</li>';
+            echo '<li class="' . ($likes_ok ? 'rep-done' : 'rep-open') . '">';
+            echo ($likes_ok ? '✓ ' : '○ ') . sprintf(
+                esc_html__('%1$d / %2$d Likes gesamt', 'crowdbook'),
+                $rep['total_likes'], $rep['min_likes']
+            );
+            echo '</li>';
+            echo '</ul>';
+            echo '</div>';
+        }
 
         if ($rows === []) {
             echo '<p>' . esc_html__('Noch keine Kapitel vorhanden.', 'crowdbook') . '</p>';
@@ -82,15 +115,30 @@ class CrowdBook_Frontend_Dashboard
             foreach ($rows as $row) {
                 $edit_url = add_query_arg('chapter_id', (int) $row->id, home_url('/editor'));
                 $status_text = (string) $row->status;
-                if ((string) $row->status === 'published' && in_array((string) ($row->pending_status ?? 'none'), ['draft', 'pending', 'rejected'], true)) {
+                $is_pending_rejected = (string) $row->status === 'published'
+                    && in_array((string) ($row->pending_status ?? 'none'), ['draft', 'pending', 'rejected'], true);
+                if ($is_pending_rejected) {
                     $status_text .= ' (' . (string) $row->pending_status . '-update)';
                 }
+                $feedback = trim((string) ($row->rejection_feedback ?? ''));
+                $show_feedback = $feedback !== '' && (
+                    (string) $row->status === 'rejected'
+                    || ((string) ($row->pending_status ?? '') === 'rejected')
+                );
                 echo '<tr>';
                 echo '<td>' . esc_html((string) $row->title) . '</td>';
                 echo '<td>' . esc_html($status_text) . '</td>';
                 echo '<td>' . (int) $row->like_count . '</td>';
                 echo '<td><a href="' . esc_url($edit_url) . '">' . esc_html__('Bearbeiten', 'crowdbook') . '</a></td>';
                 echo '</tr>';
+                if ($show_feedback) {
+                    echo '<tr class="crowdbook-rejection-row">';
+                    echo '<td colspan="4" class="crowdbook-rejection-feedback">';
+                    echo '<strong>' . esc_html__('Feedback vom Moderationsteam:', 'crowdbook') . '</strong> ';
+                    echo esc_html($feedback);
+                    echo '</td>';
+                    echo '</tr>';
+                }
             }
 
             echo '</tbody></table>';
@@ -122,6 +170,9 @@ class CrowdBook_Frontend_Dashboard
         echo '</div>';
         echo '</div></div>';
         echo '<p class="crowdbook-form-row"><label for="crowdbook_book_prologue">' . esc_html__('Prolog (Markdown)', 'crowdbook') . '</label><textarea id="crowdbook_book_prologue" name="book_prologue_markdown" rows="8">' . esc_textarea($form_prologue) . '</textarea></p>';
+        echo '<p class="crowdbook-form-row"><label for="crowdbook_book_is_extendable">' . esc_html__('Buch ist erweiterbar', 'crowdbook') . '</label>';
+        echo '<input id="crowdbook_book_is_extendable" type="checkbox" name="book_is_extendable" value="1"' . checked($form_is_extendable, true, false) . ' /> ';
+        echo '<span>' . esc_html__('Andere Autoren dürfen Kapitel hinzufügen', 'crowdbook') . '</span></p>';
         if ($book_to_edit) {
             echo '<input type="hidden" name="crowdbook_dashboard_update_book" value="1" />';
             echo '<p class="crowdbook-form-actions"><button type="submit" class="button button-primary" name="crowdbook_dashboard_create_book" value="1">' . esc_html__('Buch aktualisieren', 'crowdbook') . '</button> ';
@@ -149,6 +200,8 @@ class CrowdBook_Frontend_Dashboard
                 }
                 echo ' <code>(' . esc_html((string) $book->book_id) . ')</code> ';
                 echo '<strong>[' . esc_html($status) . ']</strong>';
+                $extendable_text = ((int) ($book->is_extendable ?? 1) === 1) ? __('offen', 'crowdbook') : __('geschlossen', 'crowdbook');
+                echo ' <em>(' . esc_html($extendable_text) . ')</em>';
                 echo ' · <a href="' . esc_url($edit_url) . '">' . esc_html__('Bearbeiten', 'crowdbook') . '</a>';
                 echo '</li>';
             }

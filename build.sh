@@ -92,6 +92,11 @@ rm -f "$zip_versioned" "$zip_latest"
        "${PLUGIN_DIR_NAME}/.DS_Store" \
        "${PLUGIN_DIR_NAME}/spec.md" \
        "${PLUGIN_DIR_NAME}/sml-wp-plugin/*" \
+       "${PLUGIN_DIR_NAME}/images/*" \
+       "${PLUGIN_DIR_NAME}/flags/*" \
+       "${PLUGIN_DIR_NAME}/boxed_background/*" \
+       "${PLUGIN_DIR_NAME}/egorkhmelev-jslider/*" \
+       "${PLUGIN_DIR_NAME}/revolution-slider-dev/*" \
        "${PLUGIN_DIR_NAME}/*.zip"
 )
 

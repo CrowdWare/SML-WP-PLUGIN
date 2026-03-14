@@ -48,7 +48,7 @@ class CrowdBook_Admin_Users_Page
 
         $rows = $this->users->get_all_users();
 
-        echo '<div class="wrap"><h1>CrowdBook – User</h1>';
+        echo '<div class="wrap"><h1>CrowdBooks – User</h1>';
         echo '<table class="widefat striped"><thead><tr>';
         echo '<th>Display Name</th><th>Email</th><th>Status</th><th>Anzahl Kapitel</th><th>Registriert</th><th>Aktionen</th>';
         echo '</tr></thead><tbody>';

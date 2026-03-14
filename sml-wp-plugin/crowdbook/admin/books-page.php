@@ -73,7 +73,7 @@ class CrowdBook_Admin_Books_Page
         $preview_render = $preview_book ? $this->books->get_effective_preview($preview_book) : null;
         $preview_is_update = $preview_book && $this->books->has_pending_version($preview_book);
 
-        echo '<div class="wrap"><h1>CrowdBook – Bücher</h1>';
+        echo '<div class="wrap"><h1>CrowdBooks – Bücher</h1>';
 
         if ($preview_book && $preview_render) {
             echo '<h2>Vorschau</h2>';

@@ -1,8 +1,8 @@
 <?php
 /**
- * Plugin Name: Forge WP SML Compiler
+ * Plugin Name: CrowdBooks
  * Plugin URI: https://codeberg.org/CrowdWare/ForgeCrowdBook
- * Description: SML Compiler for WordPress: build pages with SML, Twig and Markdown, then ship super fast static HTML.
+ * Description: Community-driven collaborative book platform: write, moderate and publish branching stories together.
  * Version: 0.1.41
  * Author: Artanidos
  * Author URI: https://codeberg.org/CrowdWare

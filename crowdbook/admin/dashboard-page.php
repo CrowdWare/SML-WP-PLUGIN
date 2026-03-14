@@ -25,7 +25,7 @@ class CrowdBook_Admin_Dashboard_Page
         $chapter_count = count($this->chapters->get_all());
 
         echo '<div class="wrap">';
-        echo '<h1>CrowdBook – Übersicht</h1>';
+        echo '<h1>CrowdBooks – Übersicht</h1>';
         echo '<p>' . esc_html__('Plugin-Seiten sind direkt verfügbar über /books, /editor, /dashboard, /login und /register.', 'crowdbook') . '</p>';
         echo '<p>' . esc_html__('Shortcodes bleiben optional, falls du Inhalte in normale WordPress-Seiten einbetten willst.', 'crowdbook') . '</p>';
 

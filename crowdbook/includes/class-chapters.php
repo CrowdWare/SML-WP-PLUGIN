@@ -6,21 +6,27 @@ if (!defined('ABSPATH')) {
 
 class CrowdBook_Chapters
 {
+    private const REVIEW_REMINDER_HOOK = 'crowdbook_review_reminder';
     private CrowdBook_Users $users;
+    private CrowdBook_Books $books;
     private CrowdBook_Spam_Filter $spam_filter;
     private CrowdBook_SML_Renderer $sml_renderer;
     private CrowdBook_Mailer $mailer;
+    private CrowdBook_Reputation $reputation;
 
     public function __construct(
         CrowdBook_Users $users,
         CrowdBook_Spam_Filter $spam_filter,
         CrowdBook_SML_Renderer $sml_renderer,
-        CrowdBook_Mailer $mailer
+        CrowdBook_Mailer $mailer,
+        CrowdBook_Reputation $reputation
     ) {
         $this->users = $users;
+        $this->books = new CrowdBook_Books();
         $this->spam_filter = $spam_filter;
         $this->sml_renderer = $sml_renderer;
         $this->mailer = $mailer;
+        $this->reputation = $reputation;
     }
 
     public function table_name(): string
@@ -47,6 +53,14 @@ class CrowdBook_Chapters
         $book_id = sanitize_key($book_id);
         if ($book_id === '') {
             return ['ok' => false, 'message' => __('Bitte wähle ein Buch aus.', 'crowdbook')];
+        }
+
+        $book = $this->books->get_by_book_id($book_id);
+        if (!$book || (string) ($book->status ?? '') !== 'active') {
+            return ['ok' => false, 'message' => __('Buch ist nicht verfügbar.', 'crowdbook')];
+        }
+        if (!$this->books->can_user_extend_book($book, $author_id)) {
+            return ['ok' => false, 'message' => __('Dieses Buch ist geschlossen. Nur der Buchautor darf es erweitern.', 'crowdbook')];
         }
 
         if ($title === '' || trim($markdown) === '') {
@@ -181,6 +195,36 @@ class CrowdBook_Chapters
                 return ['ok' => true, 'message' => __('Änderung wurde abgelehnt (Spam-Verdacht). Live-Version bleibt sichtbar.', 'crowdbook'), 'status' => 'rejected'];
             }
 
+            $live_markdown = (string) ($chapter->markdown_content ?? '');
+            $change_percent = $this->calculateChangePercent($live_markdown, $pending_markdown);
+            $auto_approve_threshold = $this->minorEditAutoApprovePercent();
+            if ($change_percent <= $auto_approve_threshold) {
+                $approved = $this->moderate_status($chapter_id, 'published');
+                if ($approved) {
+                    return [
+                        'ok' => true,
+                        'message' => sprintf(
+                            __('Kleine Änderung wurde automatisch freigegeben (%.1f%% Änderung, Schwellwert %.1f%%).', 'crowdbook'),
+                            $change_percent,
+                            $auto_approve_threshold
+                        ),
+                        'status' => 'published',
+                        'auto_approved' => true,
+                    ];
+                }
+            }
+
+            $author_email = (string) $this->get_author_email((int) $chapter->author_id);
+            $mail_title   = (string) ($chapter->pending_title ?: $chapter->title);
+
+            if ($this->reputation->is_trusted((int) $chapter->author_id)) {
+                $this->moderate_status($chapter_id, 'published');
+                if ($author_email !== '') {
+                    $this->mailer->send_trusted_chapter_live($author_email, $mail_title, $this->chapter_url((string) $chapter->slug));
+                }
+                return ['ok' => true, 'message' => __('Deine Überarbeitung wurde direkt veröffentlicht — die Community vertraut dir.', 'crowdbook'), 'status' => 'published'];
+            }
+
             $wpdb->update(
                 $this->table_name(),
                 [
@@ -192,7 +236,17 @@ class CrowdBook_Chapters
                 ['%d']
             );
 
-            return ['ok' => true, 'message' => __('Änderung wurde zur Moderation eingereicht. Live-Version bleibt sichtbar.', 'crowdbook'), 'status' => 'pending'];
+            if (method_exists($this->mailer, 'send_admin_review_needed')) {
+                $this->mailer->send_admin_review_needed($mail_title, (string) ($chapter->book_id ?? ''), $author_email, true);
+            }
+            if ($author_email !== '') {
+                if (method_exists($this->mailer, 'send_author_review_received')) {
+                    $this->mailer->send_author_review_received($author_email, $mail_title);
+                }
+            }
+            $this->scheduleReviewReminder($chapter_id);
+
+            return ['ok' => true, 'message' => __('Book will be reviewed. Please send a reminder if this takes longer than 5 days.', 'crowdbook'), 'status' => 'pending'];
         }
 
         $analysis = $this->spam_filter->analyze((string) $chapter->markdown_content);
@@ -219,6 +273,16 @@ class CrowdBook_Chapters
             return ['ok' => true, 'message' => __('Kapitel wurde zur Moderation markiert.', 'crowdbook'), 'status' => 'rejected'];
         }
 
+        $author_email = (string) $this->get_author_email((int) $chapter->author_id);
+
+        if ($this->reputation->is_trusted((int) $chapter->author_id)) {
+            $this->moderate_status($chapter_id, 'published');
+            if ($author_email !== '') {
+                $this->mailer->send_trusted_chapter_live($author_email, (string) $chapter->title, $this->chapter_url((string) $chapter->slug));
+            }
+            return ['ok' => true, 'message' => __('Dein Kapitel wurde direkt veröffentlicht — die Community vertraut dir.', 'crowdbook'), 'status' => 'published'];
+        }
+
         $wpdb->update(
             $this->table_name(),
             [
@@ -230,10 +294,20 @@ class CrowdBook_Chapters
             ['%d']
         );
 
-        return ['ok' => true, 'message' => __('Kapitel wurde zur Moderation eingereicht.', 'crowdbook'), 'status' => 'pending'];
+        if (method_exists($this->mailer, 'send_admin_review_needed')) {
+            $this->mailer->send_admin_review_needed((string) $chapter->title, (string) ($chapter->book_id ?? ''), $author_email, false);
+        }
+        if ($author_email !== '') {
+            if (method_exists($this->mailer, 'send_author_review_received')) {
+                $this->mailer->send_author_review_received($author_email, (string) $chapter->title);
+            }
+        }
+        $this->scheduleReviewReminder($chapter_id);
+
+        return ['ok' => true, 'message' => __('Book will be reviewed. Please send a reminder if this takes longer than 5 days.', 'crowdbook'), 'status' => 'pending'];
     }
 
-    public function moderate_status(int $chapter_id, string $status): bool
+    public function moderate_status(int $chapter_id, string $status, string $feedback = ''): bool
     {
         global $wpdb;
 
@@ -284,15 +358,19 @@ class CrowdBook_Chapters
             }
 
             if ($status === 'rejected') {
-                $result = $wpdb->update(
-                    $this->table_name(),
-                    [
-                        'pending_status' => 'rejected',
-                    ],
-                    ['id' => $chapter_id],
-                    ['%s'],
-                    ['%d']
-                );
+                $data = ['pending_status' => 'rejected'];
+                $format = ['%s'];
+                if ($feedback !== '') {
+                    $data['rejection_feedback'] = $feedback;
+                    $format[] = '%s';
+                }
+                $result = $wpdb->update($this->table_name(), $data, ['id' => $chapter_id], $format, ['%d']);
+
+                $author_email = (string) $this->get_author_email((int) $chapter->author_id);
+                $mail_title = (string) ($chapter->pending_title ?: $chapter->title);
+                if ($author_email !== '') {
+                    $this->mailer->send_chapter_rejected($author_email, $mail_title, $feedback);
+                }
 
                 return $result !== false;
             }
@@ -322,6 +400,11 @@ class CrowdBook_Chapters
             $format[] = '%s';
         }
 
+        if ($status === 'rejected' && $feedback !== '') {
+            $data['rejection_feedback'] = $feedback;
+            $format[] = '%s';
+        }
+
         $result = $wpdb->update(
             $this->table_name(),
             $data,
@@ -341,6 +424,13 @@ class CrowdBook_Chapters
             $published_count = $this->count_published_by_author((int) $chapter->author_id);
             if ($published_count === 1 && $author_email !== '') {
                 $this->mailer->send_first_chapter_live($author_email, (string) $chapter->title, $this->chapter_url((string) $chapter->slug));
+            }
+        }
+
+        if ($status === 'rejected') {
+            $author_email = (string) $this->get_author_email((int) $chapter->author_id);
+            if ($author_email !== '') {
+                $this->mailer->send_chapter_rejected($author_email, (string) $chapter->title, $feedback);
             }
         }
 
@@ -533,6 +623,78 @@ class CrowdBook_Chapters
         $email = $wpdb->get_var($wpdb->prepare("SELECT email FROM {$table} WHERE id = %d", $author_id));
 
         return is_string($email) ? $email : '';
+    }
+
+    public function handle_review_reminder(int $chapter_id): void
+    {
+        $chapter = $this->get_by_id($chapter_id);
+        if (!$chapter) {
+            return;
+        }
+
+        $needs_review = ((string) ($chapter->status ?? '') === 'pending')
+            || ((string) ($chapter->status ?? '') === 'published' && (string) ($chapter->pending_status ?? 'none') === 'pending');
+        if (!$needs_review) {
+            return;
+        }
+
+        $title = (string) ((string) ($chapter->pending_title ?? '') !== '' ? $chapter->pending_title : $chapter->title);
+        $author_email = (string) $this->get_author_email((int) $chapter->author_id);
+        $is_update = (string) ($chapter->status ?? '') === 'published';
+        if (method_exists($this->mailer, 'send_admin_review_reminder')) {
+            $this->mailer->send_admin_review_reminder($title, (string) ($chapter->book_id ?? ''), $author_email, $is_update);
+        }
+        if ($author_email !== '') {
+            if (method_exists($this->mailer, 'send_author_review_reminder_sent')) {
+                $this->mailer->send_author_review_reminder_sent($author_email, $title);
+            }
+        }
+    }
+
+    private function scheduleReviewReminder(int $chapter_id): void
+    {
+        if ($chapter_id <= 0) {
+            return;
+        }
+
+        if (wp_next_scheduled(self::REVIEW_REMINDER_HOOK, [$chapter_id])) {
+            return;
+        }
+
+        wp_schedule_single_event(time() + (5 * DAY_IN_SECONDS), self::REVIEW_REMINDER_HOOK, [$chapter_id]);
+    }
+
+    private function minorEditAutoApprovePercent(): float
+    {
+        $threshold = apply_filters('crowdbook_minor_edit_auto_approve_percent', 5.0);
+        $threshold = is_numeric($threshold) ? (float) $threshold : 5.0;
+        if ($threshold < 0.0) {
+            $threshold = 0.0;
+        }
+        if ($threshold > 100.0) {
+            $threshold = 100.0;
+        }
+        return $threshold;
+    }
+
+    private function calculateChangePercent(string $before, string $after): float
+    {
+        $before = str_replace(["\r\n", "\r"], "\n", $before);
+        $after = str_replace(["\r\n", "\r"], "\n", $after);
+
+        $len_before = strlen($before);
+        $len_after = strlen($after);
+        $min = min($len_before, $len_after);
+        $changed = abs($len_before - $len_after);
+
+        for ($i = 0; $i < $min; $i++) {
+            if ($before[$i] !== $after[$i]) {
+                $changed++;
+            }
+        }
+
+        $base = max(1, $len_before);
+        return ($changed / $base) * 100.0;
     }
 
     private function generate_unique_slug(string $title): string

@@ -780,6 +780,12 @@ class SML_Renderer
                 continue;
             }
 
+            if (preg_match('/^(?:-{3,}|\*{3,}|_{3,})$/', $trimmed)) {
+                $flushParagraph();
+                $html .= '<hr />';
+                continue;
+            }
+
             if (preg_match('/^[-*]\s+(.*)$/', $trimmed, $matches)) {
                 $flushParagraph();
                 $text = wp_kses_post($matches[1]);
